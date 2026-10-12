@@ -2,18 +2,21 @@
 pipeline {
     agent any
 
-    stages {
-        stage('Git Checkout') {
-            steps {
-                git branch: 'main',
-                    url: 'https://github.com/devixhub/IDREAM-DEPLOYMENT.git'
-            }
-        }
+    environment {
+        APP_NAME = 'idream'
+        WAR_FILE = 'target/idream.war'
+        TOMCAT_CONTAINER = 'idream-tomcat'
+        TOMCAT_PORT = '8081'
+    }
 
+    stages {
         stage('Check Tools') {
             steps {
-                sh 'java -version'
-                sh 'mvn -version'
+                sh '''
+                    java -version
+                    mvn -version
+                    docker --version
+                '''
             }
         }
 
@@ -25,19 +28,50 @@ pipeline {
 
         stage('Verify WAR') {
             steps {
-                sh 'ls -lh target/'
-                archiveArtifacts artifacts: 'target/*.war',
+                sh '''
+                    test -f "$WAR_FILE"
+                    ls -lh "$WAR_FILE"
+                '''
+                archiveArtifacts artifacts: 'target/idream.war',
                                  fingerprint: true
+            }
+        }
+
+        stage('Prepare Deployment Directory') {
+            steps {
+                sh '''
+                    sudo mkdir -p /opt/idream-deploy
+                    sudo chown jenkins:jenkins /opt/idream-deploy
+                    sudo cp "$WAR_FILE" /opt/idream-deploy/idream.war
+                '''
+            }
+        }
+
+        stage('Deploy to Tomcat') {
+            steps {
+                sh '''
+                    if ! sudo docker container inspect "$TOMCAT_CONTAINER" >/dev/null 2>&1; then
+                        sudo docker run -d \
+                          --name "$TOMCAT_CONTAINER" \
+                          --restart unless-stopped \
+                          -p "$TOMCAT_PORT:8080" \
+                          -v /opt/idream-deploy:/usr/local/tomcat/webapps \
+                          tomcat:10.1-jdk17-temurin
+                    else
+                        sudo docker start "$TOMCAT_CONTAINER"
+                    fi
+                '''
             }
         }
     }
 
     post {
         success {
-            echo 'IDREAM application WAR built successfully!'
+            echo 'iDream WAR built and deployed to Tomcat.'
+            echo 'Open http://EC2_PUBLIC_IP:8081/idream/'
         }
         failure {
-            echo 'Pipeline failed. Check the console output.'
+            echo 'Pipeline failed. Check Console Output.'
         }
     }
 }
